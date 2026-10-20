@@ -1,0 +1,395 @@
+Project fleet_management {
+  database_type: 'PostgreSQL'
+  Note: 'Автопарк: транспорт, водії, рейси, пальне, ТО, страхування, інциденти'
+}
+
+Enum user_role {
+  admin
+  dispatcher
+  mechanic
+  fleet_manager
+}
+
+Enum vehicle_status {
+  active
+  in_service
+  decommissioned
+}
+
+Enum trip_status {
+  planned
+  in_progress
+  completed
+  cancelled
+}
+
+Enum maintenance_status {
+  scheduled
+  in_progress
+  completed
+  cancelled
+}
+
+Enum incident_type {
+  accident
+  fine
+  breakdown
+  damage
+}
+
+Enum change_action {
+  created
+  updated
+  deleted
+  archived
+  restored
+}
+
+TableGroup "Довідники" {
+  app_users
+  cities
+  fuel_types
+  license_categories
+  vehicle_makes
+  vehicle_models
+  maintenance_types
+}
+
+TableGroup "Автопарк" {
+  depots
+  vehicles
+  insurance_policies
+}
+
+TableGroup "Водії" {
+  drivers
+  driver_license_categories
+  vehicle_assignments
+}
+
+TableGroup "Перевезення" {
+  customers
+  routes
+  trips
+  fuel_transactions
+}
+
+TableGroup "Обслуговування" {
+  service_providers
+  maintenance_records
+  maintenance_items
+  incidents
+}
+
+TableGroup "Історія змін" {
+  change_log
+  change_log_fields
+}
+
+Table app_users {
+  user_id int [pk, increment]
+  login varchar(40) [not null, unique]
+  full_name varchar(150) [not null]
+  role user_role [not null]
+  email email_text [not null, unique]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table cities {
+  city_id int [pk, increment]
+  name varchar(100) [not null]
+  oblast varchar(100)
+  indexes {
+    (oblast, name) [unique]
+  }
+}
+
+Table fuel_types {
+  fuel_type_id int [pk, increment]
+  code varchar(10) [not null, unique]
+  title varchar(50) [not null]
+  unit varchar(5) [not null, note: 'l / kWh']
+}
+
+Table license_categories {
+  category varchar(3) [pk]
+  description varchar(150) [not null]
+}
+
+Table vehicle_makes {
+  make_id int [pk, increment]
+  name varchar(60) [not null, unique]
+  country varchar(60)
+}
+
+Table vehicle_models {
+  model_id int [pk, increment]
+  make_id int [not null, ref: > vehicle_makes.make_id]
+  name varchar(80) [not null]
+  body_type varchar(20) [not null, note: 'tractor / truck / van / bus / pickup / car']
+  fuel_type_id int [not null, ref: > fuel_types.fuel_type_id]
+  required_category varchar(3) [not null, ref: > license_categories.category]
+  payload_kg int [not null, default: 0]
+  seats int [not null, default: 2]
+  fuel_norm_per_100km "numeric(5,2)" [not null]
+  indexes {
+    (make_id, name) [unique]
+  }
+}
+
+Table maintenance_types {
+  maintenance_type_id int [pk, increment]
+  code code_text [not null, unique]
+  title varchar(100) [not null]
+  every_km int
+  every_days int
+}
+
+Table depots {
+  depot_id int [pk, increment]
+  code code_text [not null, note: 'унікальний серед неархівних']
+  name varchar(150) [not null]
+  city_id int [not null, ref: > cities.city_id]
+  address varchar(200)
+  phone phone_text
+  capacity int
+  manager_id int [ref: > app_users.user_id]
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  modified_at timestamptz [not null]
+  modified_by int [ref: > app_users.user_id]
+  deleted_at timestamptz [note: 'NULL - активний запис']
+  deleted_by int [ref: > app_users.user_id]
+}
+
+Table vehicles {
+  vehicle_id int [pk, increment]
+  vin vin_text [not null, note: 'контрольна цифра ISO 3779']
+  plate_number plate_text [not null, note: 'AA1234BB']
+  model_id int [not null, ref: > vehicle_models.model_id]
+  depot_id int [not null, ref: > depots.depot_id]
+  manufacture_year int [not null]
+  purchase_date date
+  purchase_price money_amount
+  odometer_km int [not null, default: 0]
+  status vehicle_status [not null, default: 'active']
+  color varchar(30)
+  notes text
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  modified_at timestamptz [not null]
+  modified_by int [ref: > app_users.user_id]
+  deleted_at timestamptz
+  deleted_by int [ref: > app_users.user_id]
+  indexes {
+    vin [unique, note: 'WHERE deleted_at IS NULL']
+    plate_number [unique, note: 'WHERE deleted_at IS NULL']
+  }
+}
+
+Table insurance_policies {
+  policy_id int [pk, increment]
+  vehicle_id int [not null, ref: > vehicles.vehicle_id]
+  policy_type varchar(10) [not null, note: 'osago / kasko']
+  insurer varchar(150) [not null]
+  policy_number varchar(20) [not null, unique]
+  valid_during daterange [not null]
+  premium money_amount [not null]
+  Note: 'EXCLUDE: поліси одного типу на авто не перетинаються'
+}
+
+Table drivers {
+  driver_id int [pk, increment]
+  last_name varchar(60) [not null]
+  first_name varchar(60) [not null]
+  middle_name varchar(60)
+  birth_date date [not null]
+  phone phone_text
+  email email_text
+  license_number varchar(9) [not null]
+  license_expires date [not null]
+  hired_on date [not null]
+  depot_id int [not null, ref: > depots.depot_id]
+  user_id int [unique, ref: - app_users.user_id]
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  modified_at timestamptz [not null]
+  modified_by int [ref: > app_users.user_id]
+  deleted_at timestamptz
+  deleted_by int [ref: > app_users.user_id]
+}
+
+Table driver_license_categories {
+  driver_id int [not null, ref: > drivers.driver_id]
+  category varchar(3) [not null, ref: > license_categories.category]
+  obtained_on date
+  indexes {
+    (driver_id, category) [pk]
+  }
+}
+
+Table vehicle_assignments {
+  assignment_id int [pk, increment]
+  vehicle_id int [not null, ref: > vehicles.vehicle_id]
+  driver_id int [not null, ref: > drivers.driver_id]
+  active_during daterange [not null, note: 'upper = NULL - безстроково']
+  note varchar(255)
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  Note: 'EXCLUDE: в один день одне авто - один водій і навпаки'
+}
+
+Table customers {
+  customer_id int [pk, increment]
+  name varchar(200) [not null]
+  tax_code varchar(10)
+  city_id int [not null, ref: > cities.city_id]
+  address varchar(200)
+  contact_person varchar(150)
+  phone phone_text
+  email email_text
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  modified_at timestamptz [not null]
+  modified_by int [ref: > app_users.user_id]
+  deleted_at timestamptz
+  deleted_by int [ref: > app_users.user_id]
+}
+
+Table routes {
+  route_id int [pk, increment]
+  code code_text [not null]
+  name varchar(150) [not null]
+  from_city_id int [not null, ref: > cities.city_id]
+  to_city_id int [not null, ref: > cities.city_id]
+  distance_km "numeric(8,1)" [not null]
+  duration_hours "numeric(5,1)" [not null]
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  modified_at timestamptz [not null]
+  modified_by int [ref: > app_users.user_id]
+  deleted_at timestamptz
+  deleted_by int [ref: > app_users.user_id]
+}
+
+Table trips {
+  trip_id int [pk, increment]
+  trip_number varchar(20) [not null, unique, note: 'TR-РРРР-NNNNNN']
+  vehicle_id int [not null, ref: > vehicles.vehicle_id]
+  driver_id int [not null, ref: > drivers.driver_id]
+  route_id int [not null, ref: > routes.route_id]
+  customer_id int [ref: > customers.customer_id]
+  status trip_status [not null, default: 'planned']
+  planned_start timestamptz [not null]
+  planned_end timestamptz [not null]
+  started_at timestamptz
+  finished_at timestamptz
+  odometer_start int
+  odometer_end int
+  distance_km int [note: 'GENERATED: odometer_end - odometer_start']
+  cargo varchar(255)
+  cargo_weight_kg int
+  freight_price "numeric(12,2)"
+  cancel_reason varchar(255)
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  modified_at timestamptz [not null]
+  modified_by int [ref: > app_users.user_id]
+  Note: 'EXCLUDE: рейси одного авто / водія не перетинаються в часі'
+}
+
+Table fuel_transactions {
+  fuel_tx_id bigint [pk, increment]
+  vehicle_id int [not null, ref: > vehicles.vehicle_id]
+  driver_id int [ref: > drivers.driver_id]
+  fuel_type_id int [not null, ref: > fuel_types.fuel_type_id]
+  filled_at timestamptz [not null]
+  quantity "numeric(8,2)" [not null]
+  unit_price "numeric(8,2)" [not null]
+  total_cost "numeric(12,2)" [note: 'GENERATED: quantity * unit_price']
+  odometer_km int [not null]
+  station varchar(150)
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+}
+
+Table service_providers {
+  provider_id int [pk, increment]
+  name varchar(150) [not null]
+  city_id int [not null, ref: > cities.city_id]
+  address varchar(200)
+  phone phone_text
+  email email_text
+  rating "numeric(3,2)"
+  deleted_at timestamptz
+  deleted_by int [ref: > app_users.user_id]
+}
+
+Table maintenance_records {
+  maintenance_id int [pk, increment]
+  vehicle_id int [not null, ref: > vehicles.vehicle_id]
+  maintenance_type_id int [not null, ref: > maintenance_types.maintenance_type_id]
+  provider_id int [ref: > service_providers.provider_id, note: 'NULL - власними силами']
+  status maintenance_status [not null, default: 'scheduled']
+  scheduled_on date [not null]
+  started_at timestamptz
+  completed_at timestamptz
+  odometer_km int
+  description varchar(255)
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  modified_at timestamptz [not null]
+  modified_by int [ref: > app_users.user_id]
+}
+
+Table maintenance_items {
+  item_id int [pk, increment]
+  maintenance_id int [not null]
+  kind varchar(10) [not null, note: 'labor / part']
+  description varchar(200) [not null]
+  quantity "numeric(10,2)" [not null]
+  unit_price "numeric(12,2)" [not null]
+  line_total "numeric(14,2)" [note: 'GENERATED: quantity * unit_price']
+}
+
+Ref: maintenance_items.maintenance_id > maintenance_records.maintenance_id [delete: cascade]
+
+Table incidents {
+  incident_id int [pk, increment]
+  vehicle_id int [not null, ref: > vehicles.vehicle_id]
+  driver_id int [ref: > drivers.driver_id]
+  trip_id int [ref: > trips.trip_id]
+  type incident_type [not null]
+  occurred_at timestamptz [not null]
+  location varchar(200)
+  description text [not null]
+  amount money_amount [not null, default: 0]
+  driver_at_fault boolean [not null, default: false]
+  is_resolved boolean [not null, default: false]
+  created_at timestamptz [not null]
+  created_by int [ref: > app_users.user_id]
+  modified_at timestamptz [not null]
+  modified_by int [ref: > app_users.user_id]
+}
+
+Table change_log {
+  change_id bigint [pk, increment]
+  table_name varchar(63) [not null]
+  record_id int [not null]
+  action change_action [not null]
+  changed_by int [ref: > app_users.user_id]
+  changed_at timestamptz [not null, default: `now()`]
+}
+
+Table change_log_fields {
+  change_id bigint [not null]
+  field_name varchar(63) [not null]
+  old_value text
+  new_value text
+  indexes {
+    (change_id, field_name) [pk]
+  }
+}
+
+Ref: change_log_fields.change_id > change_log.change_id [delete: cascade]
